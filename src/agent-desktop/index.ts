@@ -20,7 +20,8 @@ import { createSocket } from 'node:dgram'
 import { chmodSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { createConnection } from 'node:net'
 import { homedir, tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import type { Context } from '@deepseek-ai/cordis'
 import { STAR_CURSOR_DATA_URI, GHOSTPAW_CURSOR_HOTSPOT } from '../cursor-asset.js'
 import type { ComputerImageAttachmentRef } from '../computer-use/index.js'
@@ -609,9 +610,10 @@ export function computeCursorOverlayEndpoint(
     return `\\\\.\\pipe\\agent-desktop-cursor-${sessionHash}`
   }
   const sessionHash = fnv1a64Hex([stateDir, sessionId, 'v2'])
-  const sockName = agentId
-    ? `.cursor-overlay-${sessionHash}-${fnv1a64Hex([stateDir, agentId, 'agent'])}.sock`
-    : `.cursor-overlay-${sessionHash}.sock`
+  const sockName =
+    process.platform === 'darwin' || !agentId
+      ? `.cursor-overlay-${sessionHash}.sock`
+      : `.cursor-overlay-${sessionHash}-${fnv1a64Hex([stateDir, agentId, 'agent'])}.sock`
   const candidate = join(stateDir, sockName)
   if (Buffer.byteLength(candidate, 'utf8') < 100) {
     return candidate
@@ -749,6 +751,8 @@ function writeControlToPipeOnce(
   })
 }
 
+const daemonSpawnByEndpoint = new Map<string, number>()
+
 /**
  * 向 Windows Named Pipe 或 macOS Unix Socket 直接发送 `CursorOverlayControl` 指令（如 `Present` / `Hide` / `Disable`）
  */
@@ -774,43 +778,43 @@ export async function sendNativeCursorOverlayControl(
     return false
   }
 
-  // 按需拉起 `agent-desktop` 原生无边框透明分层渲染器子进程
+  // 按需拉起 `agent-desktop` 原生无边框透明分层渲染器子进程（按 endpoint 防并发重复拉起）
   try {
-    const binPath = await ensureAgentDesktopBinary()
-    if (process.platform === 'win32') {
-      const childArgs = ['--cursor-overlay-child', sessionId, 'w1']
-      if (options.agentId) childArgs.push(options.agentId)
-      const child = spawn(binPath, childArgs, {
-        detached: true,
-        stdio: 'ignore',
-        windowsHide: true,
-        env: {
-          ...process.env,
-          AGENT_DESKTOP_HOME: stateDir,
-          AGENT_DESKTOP_CURSOR_OVERLAY_CHILD: 'w1',
-        },
-      })
-      child.unref()
-    } else if (process.platform === 'darwin') {
-      const helperPath = join(binPath, '..', 'agent-desktop-macos-helper')
-      const spawnBin = existsSync(helperPath) ? helperPath : binPath
-      const child = spawn(spawnBin, ['--cursor-overlay-child'], {
-        detached: true,
-        stdio: ['pipe', 'ignore', 'ignore'],
-        env: {
-          ...process.env,
-          AGENT_DESKTOP_HOME: stateDir,
-        },
-      })
-      try {
-        child.stdin?.write(payloadBuf)
-        child.stdin?.end()
-      } catch {}
-      child.unref()
+    const now = Date.now()
+    const lastSpawnAt = daemonSpawnByEndpoint.get(endpoint) ?? 0
+    if (now - lastSpawnAt > 2500) {
+      daemonSpawnByEndpoint.set(endpoint, now)
+      const binPath = await ensureAgentDesktopBinary()
+      if (process.platform === 'win32') {
+        const childArgs = ['--cursor-overlay-child', sessionId, 'w1']
+        if (options.agentId) childArgs.push(options.agentId)
+        const child = spawn(binPath, childArgs, {
+          detached: true,
+          stdio: 'ignore',
+          windowsHide: true,
+          env: {
+            ...process.env,
+            AGENT_DESKTOP_HOME: stateDir,
+            AGENT_DESKTOP_CURSOR_OVERLAY_CHILD: 'w1',
+          },
+        })
+        child.unref()
+      } else if (process.platform === 'darwin') {
+        const starPngPath = ensureStarCursorAsset()
+        const child = spawn(binPath, ['--cursor-daemon', endpoint, starPngPath, options.agentId || 'default'], {
+          detached: true,
+          stdio: 'ignore',
+          env: {
+            ...process.env,
+            AGENT_DESKTOP_HOME: stateDir,
+          },
+        })
+        child.unref()
+      }
     }
 
-    for (let attempt = 0; attempt < 14; attempt++) {
-      await new Promise(r => setTimeout(r, 28))
+    for (let attempt = 0; attempt < 45; attempt++) {
+      await new Promise(r => setTimeout(r, 32))
       const retry = await writeControlToPipeOnce(endpoint, payloadBuf, expectAck, 500)
       if (retry === 'delivered') {
         return true
@@ -965,7 +969,7 @@ export async function presentDesktopActionCursor(options: PresentDesktopCursorOp
       }
       await sendNativeCursorOverlayControl(sid, effectControl, {
         agentId: options.agentId,
-        expectAck: false,
+        expectAck: process.platform === 'darwin',
         allowSpawn: false,
       })
     }
@@ -1103,9 +1107,32 @@ export async function hideDesktopActionCursor(sessionId?: string, agentId?: stri
 
 let cachedBinaryPath: string | undefined
 let binaryDownloadPromise: Promise<string> | undefined
+const __adDirname = dirname(fileURLToPath(import.meta.url))
 
 /**
- * 确保本机已安装并校验 `agent-desktop v1.2.0` 原生二进制（优先走 GitHub Release镜像，GitHub Release 兜底）
+ * 解析内置的 macOS Universal 原生引擎 (`native/darwin-universal/ghostpaw-macos-helper`)
+ */
+export function resolveMacosNativeHelperPath(): string | undefined {
+  if (process.platform !== 'darwin') return undefined
+  const candidateRoots = [
+    resolve(__adDirname, '..', '..', 'native', 'darwin-universal'),
+    resolve(__adDirname, '..', 'native', 'darwin-universal'),
+    resolve(__adDirname, 'native', 'darwin-universal'),
+  ]
+  for (const root of candidateRoots) {
+    const candidate = join(root, 'ghostpaw-macos-helper')
+    if (existsSync(candidate)) {
+      try {
+        chmodSync(candidate, 0o755)
+      } catch {}
+      return candidate
+    }
+  }
+  return undefined
+}
+
+/**
+ * 确保本机已安装并校验 `agent-desktop v1.2.0` 原生二进制（macOS 优先使用内置零依赖 Universal 原生引擎 `ghostpaw-macos-helper`）
  */
 export async function ensureAgentDesktopBinary(): Promise<string> {
   const envOverride = process.env.AGENT_DESKTOP_BINARY?.trim()
@@ -1115,6 +1142,14 @@ export async function ensureAgentDesktopBinary(): Promise<string> {
 
   if (cachedBinaryPath && existsSync(cachedBinaryPath)) {
     return cachedBinaryPath
+  }
+
+  if (process.platform === 'darwin') {
+    const nativeHelper = resolveMacosNativeHelperPath()
+    if (nativeHelper) {
+      cachedBinaryPath = nativeHelper
+      return nativeHelper
+    }
   }
 
   const target = resolveAgentDesktopTarget()
@@ -1587,6 +1622,8 @@ export interface WindowsBackgroundPointActionResult {
   readonly elementRole?: string
   readonly automationId?: string
   readonly hwnd?: number
+  readonly screenX?: number
+  readonly screenY?: number
   readonly clientX?: number
   readonly clientY?: number
   readonly error?: string
@@ -1594,18 +1631,19 @@ export interface WindowsBackgroundPointActionResult {
 
 const WINDOWS_APP_ALIAS_GROUPS: ReadonlyArray<ReadonlyArray<string>> = [
   ['calc', 'calculator', 'calculatorapp', '计算器'],
-  ['notepad', '记事本'],
-  ['mspaint', 'paint', '画图'],
-  ['explorer', '文件资源管理器', '资源管理器'],
-  ['cmd', 'command prompt', '命令提示符'],
+  ['notepad', 'textedit', '记事本', '文本编辑'],
+  ['notes', '备忘录'],
+  ['mspaint', 'paint', 'preview', '画图', '预览'],
+  ['explorer', 'finder', '文件资源管理器', '资源管理器', '访达'],
+  ['cmd', 'command prompt', 'terminal', '命令提示符', '终端'],
   ['powershell', 'pwsh', 'windows powershell'],
-  ['wps', 'wps office', 'et', 'wpp', 'ksolaunch', '文字', '表格', '演示'],
+  ['wps', 'wps office', 'wpsoffice', 'et', 'wpp', 'ksolaunch', '文字', '表格', '演示'],
   ['weixin', 'wechat', '微信'],
   ['wxwork', 'wecom', '企业微信'],
   ['dingtalk', '钉钉'],
   ['feishu', 'lark', '飞书'],
   ['chrome', 'google chrome'],
-  ['msedge', 'edge', 'microsoft edge', 'browser', '浏览器'],
+  ['msedge', 'edge', 'microsoft edge', 'safari', 'browser', '浏览器'],
   ['code', 'vscode', 'visual studio code'],
 ]
 
@@ -2766,11 +2804,137 @@ function parseWindowsBgOutput(
   }
 }
 
+export function executeMacosBackgroundPointAction(
+  options: WindowsBackgroundPointActionOptions,
+): WindowsBackgroundPointActionResult {
+  if (process.platform !== 'darwin') {
+    return { ok: false, method: 'unsupported-os', detail: 'only supported on darwin', error: 'only supported on darwin' }
+  }
+  const helperPath = resolveMacosNativeHelperPath()
+  if (!helperPath) {
+    return { ok: false, method: 'macos-helper-missing', detail: 'ghostpaw-macos-helper not found', error: 'ghostpaw-macos-helper not found' }
+  }
+  try {
+    const normalizedOptions: WindowsBackgroundPointActionOptions = {
+      ...options,
+      hasExplicitCoord:
+        options.hasExplicitCoord ??
+        (typeof options.x === 'number' &&
+          Number.isFinite(options.x) &&
+          typeof options.y === 'number' &&
+          Number.isFinite(options.y)),
+    }
+    const payloadB64 = Buffer.from(JSON.stringify(normalizedOptions), 'utf8').toString('base64')
+    const res = spawnSync(helperPath, ['--bg-action', payloadB64], {
+      encoding: 'utf8',
+      timeout: 12000,
+    })
+    return parseWindowsBgOutput(res.stdout || '', res.stderr || '', res.status)
+  } catch (err) {
+    const errText = err instanceof Error ? err.message : String(err)
+    return {
+      ok: false,
+      method: 'macos-bg-exception',
+      detail: errText,
+      error: errText,
+    }
+  }
+}
+
+export async function executeMacosBackgroundPointActionAsync(
+  options: WindowsBackgroundPointActionOptions,
+): Promise<WindowsBackgroundPointActionResult> {
+  if (process.platform !== 'darwin') {
+    return { ok: false, method: 'unsupported-os', detail: 'only supported on darwin', error: 'only supported on darwin' }
+  }
+  const helperPath = resolveMacosNativeHelperPath()
+  if (!helperPath) {
+    return { ok: false, method: 'macos-helper-missing', detail: 'ghostpaw-macos-helper not found', error: 'ghostpaw-macos-helper not found' }
+  }
+  try {
+    const normalizedOptions: WindowsBackgroundPointActionOptions = {
+      ...options,
+      hasExplicitCoord:
+        options.hasExplicitCoord ??
+        (typeof options.x === 'number' &&
+          Number.isFinite(options.x) &&
+          typeof options.y === 'number' &&
+          Number.isFinite(options.y)),
+    }
+    const payloadB64 = Buffer.from(JSON.stringify(normalizedOptions), 'utf8').toString('base64')
+    return await new Promise<WindowsBackgroundPointActionResult>(resolvePromise => {
+      const child = spawn(helperPath, ['--bg-action', payloadB64], {
+        stdio: ['ignore', 'pipe', 'pipe'],
+      })
+      const outChunks: Buffer[] = []
+      const errChunks: Buffer[] = []
+      let settled = false
+      const timer = setTimeout(() => {
+        if (!settled) {
+          settled = true
+          try {
+            child.kill('SIGKILL')
+          } catch {}
+          resolvePromise({
+            ok: false,
+            method: 'macos-bg-timeout',
+            detail: 'background macos helper timed out after 15000ms',
+            error: 'timeout',
+          })
+        }
+      }, 15000)
+      child.stdout?.on('data', (chunk: Buffer) => outChunks.push(chunk))
+      child.stderr?.on('data', (chunk: Buffer) => errChunks.push(chunk))
+      child.on('error', err => {
+        if (settled) return
+        settled = true
+        clearTimeout(timer)
+        const errText = err instanceof Error ? err.message : String(err)
+        resolvePromise({
+          ok: false,
+          method: 'macos-bg-spawn-error',
+          detail: errText,
+          error: errText,
+        })
+      })
+      child.on('close', code => {
+        if (settled) return
+        settled = true
+        clearTimeout(timer)
+        try {
+          const stdout = Buffer.concat(outChunks).toString('utf8')
+          const stderr = Buffer.concat(errChunks).toString('utf8')
+          resolvePromise(parseWindowsBgOutput(stdout, stderr, code))
+        } catch (err) {
+          const errText = err instanceof Error ? err.message : String(err)
+          resolvePromise({
+            ok: false,
+            method: 'macos-bg-exception',
+            detail: errText,
+            error: errText,
+          })
+        }
+      })
+    })
+  } catch (err) {
+    const errText = err instanceof Error ? err.message : String(err)
+    return {
+      ok: false,
+      method: 'macos-bg-exception',
+      detail: errText,
+      error: errText,
+    }
+  }
+}
+
 export function executeWindowsBackgroundPointAction(
   options: WindowsBackgroundPointActionOptions,
 ): WindowsBackgroundPointActionResult {
+  if (process.platform === 'darwin') {
+    return executeMacosBackgroundPointAction(options)
+  }
   if (process.platform !== 'win32') {
-    return { ok: false, method: 'unsupported-os', detail: 'only supported on win32', error: 'only supported on win32' }
+    return { ok: false, method: 'unsupported-os', detail: 'only supported on win32/darwin', error: 'only supported on win32/darwin' }
   }
   try {
     const { scriptPath, dllPath, payloadB64 } = prepareWindowsBgInvocation(options)
@@ -2798,8 +2962,11 @@ export function executeWindowsBackgroundPointAction(
 export async function executeWindowsBackgroundPointActionAsync(
   options: WindowsBackgroundPointActionOptions,
 ): Promise<WindowsBackgroundPointActionResult> {
+  if (process.platform === 'darwin') {
+    return executeMacosBackgroundPointActionAsync(options)
+  }
   if (process.platform !== 'win32') {
-    return { ok: false, method: 'unsupported-os', detail: 'only supported on win32', error: 'only supported on win32' }
+    return { ok: false, method: 'unsupported-os', detail: 'only supported on win32/darwin', error: 'only supported on win32/darwin' }
   }
   try {
     const { scriptPath, dllPath, payloadB64 } = prepareWindowsBgInvocation(options)
@@ -3346,7 +3513,7 @@ async function resolveWindowsWindowByApp(
   appQuery: string | undefined,
   agentId?: string,
 ): Promise<WindowsResolvedWindow | undefined> {
-  if (process.platform !== 'win32' || !appQuery?.trim()) return undefined
+  if ((process.platform !== 'win32' && process.platform !== 'darwin') || !appQuery?.trim()) return undefined
   try {
     let list = await fetchWindowsWindowListCached(sessionId, agentId, false)
     for (let pass = 0; pass < 2; pass++) {
@@ -3641,7 +3808,7 @@ export async function executeAgentDesktopAction(
 
   let preResolvedWin: WindowsResolvedWindow | undefined
   if (
-    process.platform === 'win32' &&
+    (process.platform === 'win32' || process.platform === 'darwin') &&
     args.app?.trim() &&
     !args.windowId?.trim() &&
     action !== 'status' &&
@@ -3758,9 +3925,9 @@ export async function executeAgentDesktopAction(
     ? 'headed-physical'
     : 'headless-semantic-star-cursor'
 
-  // Windows 下双语应用名/进程名自动解析为精确的 windowId (如 "calc.exe" / "计算器" -> "w-67304" / "CalculatorApp")
+  // Windows / macOS 下双语应用名/进程名自动解析为精确的 windowId (如 "calc.exe" / "计算器" -> "w-67304" / "Calculator")
   if (
-    process.platform === 'win32' &&
+    (process.platform === 'win32' || process.platform === 'darwin') &&
     effectiveApp &&
     !effectiveWindowId &&
     action !== 'status' &&
@@ -4129,9 +4296,9 @@ export async function executeAgentDesktopAction(
     })
   }
 
-  // Windows 下后台无感调整窗口位置与大小（SWP_NOZORDER | SWP_NOACTIVATE，绝不改变窗口层级或抢占焦点）
+  // Windows / macOS 下后台无感调整窗口位置与大小（绝不改变窗口层级或抢占焦点）
   if (
-    process.platform === 'win32' &&
+    (process.platform === 'win32' || process.platform === 'darwin') &&
     !isHeaded &&
     (action === 'move_window' || action === 'resize_window')
   ) {
@@ -4165,9 +4332,9 @@ export async function executeAgentDesktopAction(
     })
   }
 
-  // Windows 下后台无感就绪窗口（拦截 focus_window / restore / focus，仅在窗口最小化时通过 SW_SHOWNOACTIVATE 恢复，绝不改变 Z 序或抢占前台焦点）
+  // Windows / macOS 下后台无感就绪窗口（拦截 focus_window / restore / focus，仅在窗口最小化时无感恢复，绝不改变 Z 序或抢占前台焦点）
   if (
-    process.platform === 'win32' &&
+    (process.platform === 'win32' || process.platform === 'darwin') &&
     !isHeaded &&
     (action === 'focus_window' || action === 'restore' || action === 'focus')
   ) {
@@ -4205,8 +4372,8 @@ export async function executeAgentDesktopAction(
     })
   }
 
-  // Windows 下后台无感启动/附着应用（若目标应用已打开则直接后台附着；若未打开则后台启动，绝不弹窗抢焦点）
-  if (process.platform === 'win32' && !isHeaded && action === 'launch') {
+  // Windows / macOS 下后台无感启动/附着应用（若目标应用已打开则直接后台附着；若未打开则后台启动，绝不弹窗抢焦点）
+  if ((process.platform === 'win32' || process.platform === 'darwin') && !isHeaded && action === 'launch') {
     const targetApp = args.app?.trim() || effectiveApp
     if (!targetApp) {
       throw new Error('launch 动作必须提供 app 参数（应用名称或可执行路径）')
@@ -4247,11 +4414,11 @@ export async function executeAgentDesktopAction(
     })
   }
 
-  // Windows 后台遮挡穿透优先执行：
-  // 无论传入的是 @ref 还是 (x, y)，在 Windows 后台模式 (!isHeaded) 下均优先通过 GhostPawWin32BgV4（UWP CoreWindow 零激活按键 + 句柄作用域 UIA 穿透 + EnumChildWindows 深度子句柄 EM_REPLACESEL/PostMessageW）执行！
-  // 这样既彻底绕过 agent-desktop.exe 的全局 interaction.lock 串行锁与 occluded 遮挡报错，又保证 100% 零 SetFocus / 零 SetForegroundWindow / 零 Z 序变动！
+  // Windows / macOS 后台遮挡穿透优先执行：
+  // 无论传入的是 @ref 还是 (x, y)，在后台模式 (!isHeaded) 下均优先通过原生后台无感透传引擎（Windows GhostPawWin32BgV4 / macOS ghostpaw-macos-helper AXUIElement + CGEventPostToPid）执行！
+  // 这样既彻底绕过全局 interaction.lock 串行锁与 occluded 遮挡报错，又保证 100% 零抢前台焦点 / 零 Z 序变动！
   if (
-    process.platform === 'win32' &&
+    (process.platform === 'win32' || process.platform === 'darwin') &&
     !isHeaded &&
     isPointCapableAction &&
     !args.waitFor &&
@@ -4291,19 +4458,37 @@ export async function executeAgentDesktopAction(
       automationId: refMeta?.automationId,
     })
     if (bgRes.ok) {
+      const resolvedX = typeof targetCursorX === 'number' ? targetCursorX : bgRes.screenX
+      const resolvedY = typeof targetCursorY === 'number' ? targetCursorY : bgRes.screenY
+      if (
+        chatBubbleText &&
+        typeof targetCursorX !== 'number' &&
+        typeof resolvedX === 'number' &&
+        typeof resolvedY === 'number'
+      ) {
+        await presentDesktopActionCursor({
+          x: resolvedX,
+          y: resolvedY,
+          targetRect: effectiveTargetRect,
+          bubbleText: chatBubbleText,
+          isClick: isClickLike,
+          sessionId: sessionState.sessionId,
+          agentId: cursorAgentId,
+        })
+      }
       return sanitizeLosslessJson({
         ok: true,
         action,
         sessionId: sessionState.sessionId,
         snapshotId: agentState.lastSnapshotId || sessionState.lastSnapshotId,
         deliveryMode,
-        starCursorActive: Boolean(chatBubbleText && typeof targetCursorX === 'number'),
+        starCursorActive: Boolean(chatBubbleText && typeof resolvedX === 'number'),
         chatBubbleText,
-        summary: `✅ [agent_desktop:${action}] (Windows 后台遮挡透传 ${qualifiedRef || `@(${targetCursorX ?? 'N/A'},${targetCursorY ?? 'N/A'})`} + ✨琉璃小鼠标气泡) 执行成功 [${bgRes.method}: ${bgRes.detail}]`,
+        summary: `✅ [agent_desktop:${action}] (${process.platform === 'darwin' ? 'macOS' : 'Windows'} 后台遮挡透传 ${qualifiedRef || `@(${resolvedX ?? 'N/A'},${resolvedY ?? 'N/A'})`} + ✨琉璃小鼠标气泡) 执行成功 [${bgRes.method}: ${bgRes.detail}]`,
         data: {
           ...(qualifiedRef ? { ref: qualifiedRef } : {}),
-          ...(typeof targetCursorX === 'number' ? { x: targetCursorX } : {}),
-          ...(typeof targetCursorY === 'number' ? { y: targetCursorY } : {}),
+          ...(typeof resolvedX === 'number' ? { x: resolvedX } : {}),
+          ...(typeof resolvedY === 'number' ? { y: resolvedY } : {}),
           window_id: effectiveWindowId,
           app: effectiveApp,
           method: bgRes.method,
@@ -4320,7 +4505,7 @@ export async function executeAgentDesktopAction(
 
   // 2. 窗口/屏幕无感截图（返回多模态图片附件）
   if (action === 'screenshot') {
-    const shotPath = join(tmpdir(), `ghostpaw-shot-${Date.now()}.png`)
+    const shotPath = join(tmpdir(), `ghostpaw-shot-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.png`)
     const cliArgs = [...buildGlobalCliOptions(sessionState.sessionId, { ...args, agentId: effectiveAgentId }), 'screenshot']
     if (effectiveWindowId) {
       cliArgs.push('--window-id', effectiveWindowId)
@@ -4392,8 +4577,8 @@ export async function executeAgentDesktopAction(
 
     case 'list_windows':
       cliArgs = [...globalFlags, 'list-windows']
-      // Windows 下不向 CLI 传原始 --app（因 "calc.exe"/"记事本" 会被单语过滤丢弃），改由返回后做双语别名匹配
-      if (args.app?.trim() && process.platform !== 'win32') {
+      // Windows / macOS 下不向 CLI 传原始 --app（因 "calc.exe"/"记事本"/"文本编辑" 会被单语过滤丢弃），改由返回后做双语别名匹配
+      if (args.app?.trim() && process.platform !== 'win32' && process.platform !== 'darwin') {
         cliArgs.push('--app', args.app.trim())
       }
       break
@@ -4505,7 +4690,7 @@ export async function executeAgentDesktopAction(
     case 'type': {
       if (!qualifiedRef) throw new Error('type 动作必须提供 ref 参数或目标 (x, y) 坐标')
       stdinText = String(args.text ?? args.value ?? '')
-      if (process.platform === 'win32' && !isHeaded) {
+      if ((process.platform === 'win32' || process.platform === 'darwin') && !isHeaded) {
         cliArgs = [...globalFlags, 'set-value', qualifiedRef, '--stdin']
       } else {
         cliArgs = [...globalFlags, 'type', qualifiedRef, '--stdin']
@@ -4538,7 +4723,7 @@ export async function executeAgentDesktopAction(
     case 'press': {
       const combo = String(args.key ?? args.text ?? '').trim()
       if (!combo) throw new Error('press 动作必须提供 key 参数（如 "return", "escape", "ctrl+s", "cmd+c"）')
-      if (process.platform === 'win32' && !isHeaded) {
+      if ((process.platform === 'win32' || process.platform === 'darwin') && !isHeaded) {
         const bgKey = await executeWindowsBackgroundPointActionAsync({
           action: combo.includes('+') ? 'hotkey' : 'key',
           key: combo,
@@ -4687,9 +4872,9 @@ export async function executeAgentDesktopAction(
     timeoutMs: Math.max(35000, (args.timeoutMs ?? 0) + 10000),
   })
 
-  // Windows 下若目标窗口处于最小化状态导致报错 WINDOW_MINIMIZED，自动通过 SW_SHOWNOACTIVATE 在后台无感恢复并重试，不抢夺用户前台窗口
+  // Windows / macOS 下若目标窗口处于最小化状态导致报错 WINDOW_MINIMIZED，自动在后台无感恢复并重试，不抢夺用户前台窗口
   if (
-    process.platform === 'win32' &&
+    (process.platform === 'win32' || process.platform === 'darwin') &&
     !isHeaded &&
     res.envelope?.ok === false &&
     res.envelope.error?.code === 'WINDOW_MINIMIZED'
@@ -4721,9 +4906,9 @@ export async function executeAgentDesktopAction(
     })
   }
 
-  // Windows 下若 CLI 语义动作失败，自动回退到后台句柄透传引擎，绝不抢占物理鼠标
+  // Windows / macOS 下若 CLI 语义动作失败，自动回退到后台句柄透传引擎，绝不抢占物理鼠标
   if (
-    process.platform === 'win32' &&
+    (process.platform === 'win32' || process.platform === 'darwin') &&
     !isHeaded &&
     !res.envelope?.ok &&
     isPointCapableAction &&
@@ -4770,7 +4955,7 @@ export async function executeAgentDesktopAction(
         deliveryMode,
         starCursorActive: Boolean(chatBubbleText),
         chatBubbleText,
-        summary: `✅ [agent_desktop:${action}] (Windows 后台句柄透传自动兜底 @(${targetCursorX ?? 'N/A'},${targetCursorY ?? 'N/A'}) + ✨琉璃小鼠标气泡) 执行成功 [${bgFallback.method}: ${bgFallback.detail}]`,
+        summary: `✅ [agent_desktop:${action}] (${process.platform === 'darwin' ? 'macOS' : 'Windows'} 后台句柄透传自动兜底 @(${targetCursorX ?? 'N/A'},${targetCursorY ?? 'N/A'}) + ✨琉璃小鼠标气泡) 执行成功 [${bgFallback.method}: ${bgFallback.detail}]`,
         data: {
           ref: qualifiedRef,
           x: targetCursorX,
@@ -4839,11 +5024,11 @@ export async function executeAgentDesktopAction(
         undefined
       return appVal && !w.app ? { ...w, app: appVal } : w
     })
-    if (process.platform === 'win32' && allWins.length > 0) {
+    if ((process.platform === 'win32' || process.platform === 'darwin') && allWins.length > 0) {
       windowsListCache = { ts: Date.now(), list: allWins }
     }
     const filteredWins =
-      process.platform === 'win32' && args.app?.trim()
+      (process.platform === 'win32' || process.platform === 'darwin') && args.app?.trim()
         ? allWins.filter(w =>
             matchWindowsAppCandidate(args.app, {
               id: typeof w.id === 'string' ? w.id : undefined,
@@ -4959,6 +5144,8 @@ function unregisterToolSafely(ctx: Context, toolName: string): void {
 ;(globalThis as Record<string, unknown>).__ghostPawDesktopRuntime = {
   executeAgentDesktopAction,
   executeWindowsBackgroundPointAction,
+  executeMacosBackgroundPointAction,
+  resolveMacosNativeHelperPath,
   findBestRefAtPoint,
   matchWindowsAppCandidate,
   presentDesktopActionCursor,
@@ -5248,6 +5435,9 @@ export function applyAgentDesktopTool(ctx: Context): void {
       },
     },
     isConcurrencySafe(args) {
+      if ((process.platform === 'win32' || process.platform === 'darwin') && args.headed !== true) {
+        return true
+      }
       return (
         args.action === 'status' ||
         args.action === 'permissions' ||

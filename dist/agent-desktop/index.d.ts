@@ -105,7 +105,11 @@ export declare function presentDesktopActionCursor(options: PresentDesktopCursor
  */
 export declare function hideDesktopActionCursor(sessionId?: string, agentId?: string): Promise<void>;
 /**
- * 确保本机已安装并校验 `agent-desktop v1.2.0` 原生二进制（优先走 GitHub Release镜像，GitHub Release 兜底）
+ * 解析内置的 macOS Universal 原生引擎 (`native/darwin-universal/ghostpaw-macos-helper`)
+ */
+export declare function resolveMacosNativeHelperPath(): string | undefined;
+/**
+ * 确保本机已安装并校验 `agent-desktop v1.2.0` 原生二进制（macOS 优先使用内置零依赖 Universal 原生引擎 `ghostpaw-macos-helper`）
  */
 export declare function ensureAgentDesktopBinary(): Promise<string>;
 export interface AgentDesktopCliResponse {
@@ -219,6 +223,8 @@ export interface WindowsBackgroundPointActionResult {
     readonly elementRole?: string;
     readonly automationId?: string;
     readonly hwnd?: number;
+    readonly screenX?: number;
+    readonly screenY?: number;
     readonly clientX?: number;
     readonly clientY?: number;
     readonly error?: string;
@@ -230,6 +236,8 @@ export declare function matchWindowsAppCandidate(query: string | undefined, cand
     readonly title?: string;
 }): boolean;
 export declare function parseWindowHandleFromId(windowId?: string): number | undefined;
+export declare function executeMacosBackgroundPointAction(options: WindowsBackgroundPointActionOptions): WindowsBackgroundPointActionResult;
+export declare function executeMacosBackgroundPointActionAsync(options: WindowsBackgroundPointActionOptions): Promise<WindowsBackgroundPointActionResult>;
 export declare function executeWindowsBackgroundPointAction(options: WindowsBackgroundPointActionOptions): WindowsBackgroundPointActionResult;
 export declare function executeWindowsBackgroundPointActionAsync(options: WindowsBackgroundPointActionOptions): Promise<WindowsBackgroundPointActionResult>;
 /**

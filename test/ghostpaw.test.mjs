@@ -124,3 +124,20 @@ test('4. DSH market-index.json conforms to @deepseek-ai/dsh-plugin-market Format
   assert.ok(obj.locales['zh-CN'].title.includes('GhostPaw'))
   assert.ok(obj.locales['en-US'].title.includes('GhostPaw'))
 })
+
+test('5. macOS Universal native helper (ghostpaw-macos-helper) is bundled and functional on darwin', async () => {
+  const mod = await import(join(ROOT, 'dist', 'index.js'))
+  const helperFile = join(ROOT, 'native', 'darwin-universal', 'ghostpaw-macos-helper')
+  assert.ok(existsSync(helperFile), 'native/darwin-universal/ghostpaw-macos-helper must exist in package')
+  assert.equal(typeof mod.resolveMacosNativeHelperPath, 'function')
+  assert.equal(typeof mod.executeMacosBackgroundPointAction, 'function')
+
+  if (process.platform === 'darwin') {
+    const resolved = mod.resolveMacosNativeHelperPath()
+    assert.ok(resolved && existsSync(resolved), 'resolveMacosNativeHelperPath() must resolve on darwin')
+    const statusRes = await mod.executeAgentDesktopAction({ action: 'status' })
+    assert.equal(statusRes.ok, true)
+    assert.equal(statusRes.data.platform, 'macos')
+    assert.ok(statusRes.data.trusted === true || statusRes.data.trusted === 1 || statusRes.data.trusted === false || statusRes.data.trusted === 0)
+  }
+})

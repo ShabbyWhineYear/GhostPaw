@@ -95,10 +95,3 @@ export interface SystemPromptService {
   section(section: PromptSection): () => void
   context?(ctx: PromptContext): () => void
 }
-
-declare module '@deepseek-ai/cordis' {
-  interface Context {
-    tools: ToolRuntimeService
-    systemPrompt: SystemPromptService
-  }
-}

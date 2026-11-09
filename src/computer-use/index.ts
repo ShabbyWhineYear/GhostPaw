@@ -38,8 +38,14 @@ function fallbackMatchWindowsApp(
   const groups = [
     ['calc', 'calculator', 'calculatorapp', '计算器'],
     ['notepad', '记事本'],
+    ['textedit', '文本编辑'],
+    ['notes', '备忘录'],
     ['mspaint', 'paint', '画图'],
     ['explorer', '文件资源管理器', '资源管理器'],
+    ['finder', '访达'],
+    ['preview', '预览'],
+    ['safari', '浏览器'],
+    ['terminal', '终端'],
     ['wps', 'wps office', 'et', 'wpp', '文字', '表格', '演示'],
     ['weixin', 'wechat', '微信'],
   ]
@@ -993,6 +999,10 @@ export function listDesktopWindows(libnut: LibnutNativeAddon): DesktopWindowInfo
         title === 'mutter guard window' ||
         title === 'gnome-shell' ||
         title === 'Desktop' ||
+        title === 'Dock' ||
+        title === 'Window Server' ||
+        title === 'Control Center' ||
+        title === 'Notification Center' ||
         title === 'Program Manager' ||
         title === 'ghostpaw-cursor-overlay' ||
         title === 'agent-desktop cursor overlay' ||
@@ -1474,6 +1484,9 @@ export function applyComputerUseTool(ctx: Context): void {
       },
     },
     isConcurrencySafe(args) {
+      if ((process.platform === 'win32' || process.platform === 'darwin') && args.physicalMouse !== true) {
+        return true
+      }
       return args.action === 'screenshot' || args.action === 'cursor_position' || args.action === 'list_windows'
     },
     async execute(args, exec) {
@@ -1500,7 +1513,7 @@ export function applyComputerUseTool(ctx: Context): void {
 
       const screenSize = libnut.getScreenSize()
       const coordSpace: CoordinateSpace = args.coordinateSpace ?? 'pixels'
-      const useWinBg = process.platform === 'win32' && args.physicalMouse !== true
+      const useWinBg = (process.platform === 'win32' || process.platform === 'darwin') && args.physicalMouse !== true
 
       // 1. Fail-Safe 急停保护检查（仅在真正移动物理鼠标时检查；Windows 后台琉璃鼠标模式下不拦截用户自己的物理鼠标）
       if (!useWinBg) {

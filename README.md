@@ -18,13 +18,14 @@ Traditional `computer-use` tools hijack your physical mouse cursor and force tar
 **GhostPaw** solves this at the OS window-manager level:
 
 1. **🔇 100% Non-Focus-Stealing Background Launch & Activation (`launch_background`)**:
-   - Launches or restores desktop applications in the background (`ShowWindowAsync(SW_SHOWNOACTIVATE)` + Foreground Focus Shield on Windows, background X11/CGEvent routing on Linux/macOS) without ever stealing your active keyboard/mouse focus or altering your foreground Z-order.
-2. **👻 Occluded Window Passthrough Click, Type & Screenshot (`GhostPawWin32BgV4`)**:
-   - Sends clicks, double-clicks, right-clicks, text input (`WM_CHAR` / `EM_REPLACESEL` / UIA `ValuePattern`), keystrokes, and mouse wheel scrolling directly to background or partially/fully occluded windows (`HWND` / `CoreWindow` / `UIA` / `AT-SPI` / `AXUIElement`).
-   - Captures crystal-clear screenshots of occluded windows via DWM `PrintWindow(PW_RENDERFULLCONTENT)` without bringing them to the front.
+   - **Windows**: Launches or restores desktop applications in the background via `ShowWindowAsync(SW_SHOWNOACTIVATE)` + Foreground Focus Shield without ever stealing your active keyboard/mouse focus or altering your foreground Z-order.
+   - **macOS (`darwin`)**: Launches or attaches to apps via `NSWorkspaceOpenConfiguration (activates = NO)` / `open -g` (plus automatic background `newDocument:` menu invocation for document-based apps like `TextEdit` when open with zero windows) while keeping `isActive = 0` and preserving your foreground app focus.
+2. **👻 Occluded Window Passthrough Click, Type & Screenshot (`GhostPawWin32BgV4` & `ghostpaw-macos-helper`)**:
+   - **Windows**: Sends clicks, double-clicks, right-clicks, text input (`WM_CHAR` / `EM_REPLACESEL` / UIA `ValuePattern`), keystrokes (`CoreWindow` zero-activation key routing for UWP Calculator), and mouse wheel scrolling directly to background or occluded windows (`HWND` / `UIA`), and captures occluded windows via DWM `PrintWindow(PW_RENDERFULLCONTENT)`.
+   - **macOS (`darwin`)**: Bundled Universal (`arm64` + `x86_64`) native engine (`native/darwin-universal/ghostpaw-macos-helper`) performs window-scoped `AXUIElementPerformAction(kAXPressAction)` (including macOS Calculator `AXIdentifier` button fast-path), `AXUIElementSetAttributeValue(kAXValueAttribute)` direct text injection, `CGEventPostToPid` background keyboard/scroll routing, and private `_AXUIElementGetWindow` $\rightarrow$ `screencapture -l <cgWindowId> -x -o` occluded window capture.
 3. **🐾 Multi-Sub-Agent Parallel Execution & Neon Hollow GhostPaw Cursor**:
-   - Multiple sub-agents (plus the main agent) can operate different desktop windows **at the exact same millisecond** without interfering with each other or with your physical mouse.
-   - Each agent displays an independent **Neon Hollow GhostPaw Cursor** (Aurora Mint-Cyan `#00FFD6` → Cyber Magenta `#FF248F` glowing hollow paw print with a transparent core so underlying button text remains readable right through the cursor!) + a live status bubble that automatically vanishes after 10 seconds of inactivity.
+   - Multiple sub-agents (plus the main agent) can operate different desktop windows **at the exact same millisecond** on both **Windows** and **macOS** without interfering with each other or with your physical mouse (zero global `interaction.lock` contention).
+   - Each agent spawns its own per-agent cursor daemon (`\\.\pipe\ghostpaw-cursor-<agentId>` on Windows; `/tmp/ghostpaw-cursor-<agentId>.sock` with `NSApplicationActivationPolicyProhibited` + `NSScreenSaverWindowLevel` + `ignoresMouseEvents = YES` on macOS) rendering an independent **Neon Hollow GhostPaw Cursor** (Aurora Mint-Cyan `#00FFD6` → Cyber Magenta `#FF248F` glowing hollow paw print with a transparent core so underlying button text remains readable right through the cursor!) + a color-coded live status pill bubble that automatically vanishes after 10 seconds of inactivity.
 
 ---
 

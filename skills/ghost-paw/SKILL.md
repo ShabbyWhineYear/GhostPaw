@@ -8,7 +8,7 @@ description: Operate desktop applications in the background without stealing win
 ## Core Principles
 
 1. **Always Keep `headed: false` (Default)**:
-   - `GhostPaw` operates desktop applications in the background via OS accessibility trees (`UIA` / `AXUIElement` / `AT-SPI`), Win32 message passthrough (`PostMessage` / `SendNotifyMessage`), and DWM `PrintWindow` capture.
+   - `GhostPaw` operates desktop applications in the background via OS accessibility trees (`UIA` on Windows, `AXUIElement` + `CGEventPostToPid` via `ghostpaw-macos-helper` on macOS, `AT-SPI` on Linux), window-scoped message passthrough (`PostMessage` / `SendNotifyMessage` / `kAXPressAction` / `kAXValueAttribute`), and occluded window capture (DWM `PrintWindow` on Windows, `screencapture -l <cgWindowId> -x -o` on macOS).
    - Never set `headed: true` unless explicitly requested by the user. Keeping `headed: false` guarantees the user's foreground window focus and physical mouse are never hijacked.
 
 2. **Background App Launch (`launch`)**:
