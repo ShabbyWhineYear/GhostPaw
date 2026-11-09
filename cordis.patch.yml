@@ -1,0 +1,4 @@
+plugins:
+  ghost-paw:
+    enableSystemPrompt: true
+    systemPromptOrder: 45

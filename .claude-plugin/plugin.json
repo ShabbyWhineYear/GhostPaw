@@ -1,0 +1,20 @@
+{
+  "name": "ghost-paw",
+  "version": "0.1.0",
+  "description": "Background non-focus-stealing computer-use & multi-sub-agent parallel Neon Hollow cursor engine",
+  "author": {
+    "name": "ShabbyWhineYear",
+    "url": "https://github.com/ShabbyWhineYear"
+  },
+  "repository": "https://github.com/ShabbyWhineYear/GhostPaw",
+  "license": "MIT",
+  "skills": [
+    "./skills/ghost-paw"
+  ],
+  "mcpServers": {
+    "ghost-paw": {
+      "command": "npx",
+      "args": ["-y", "ghost-paw", "mcp"]
+    }
+  }
+}

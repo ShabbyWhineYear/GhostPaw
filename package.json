@@ -1,0 +1,103 @@
+{
+  "name": "ghost-paw",
+  "version": "0.1.0",
+  "description": "GhostPaw — Background non-focus-stealing computer-use & multi-sub-agent parallel Neon Hollow cursor engine for DeepSeek Harness (dsh), Claude Code, OpenAI Codex, Antigravity, Cursor, and Windsurf.",
+  "type": "module",
+  "license": "MIT",
+  "author": "ShabbyWhineYear",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ShabbyWhineYear/GhostPaw.git"
+  },
+  "homepage": "https://github.com/ShabbyWhineYear/GhostPaw#readme",
+  "bugs": {
+    "url": "https://github.com/ShabbyWhineYear/GhostPaw/issues"
+  },
+  "keywords": [
+    "computer-use",
+    "desktop-automation",
+    "background-click",
+    "multi-agent",
+    "sub-agent",
+    "mcp",
+    "mcp-server",
+    "deepseek-harness",
+    "dsh-plugin",
+    "claude-code",
+    "codex",
+    "antigravity",
+    "ghost-paw"
+  ],
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "bin": {
+    "ghost-paw": "./dist/cli.js",
+    "ghost-paw-mcp": "./dist/cli.js"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./agent-desktop": {
+      "types": "./dist/agent-desktop/index.d.ts",
+      "default": "./dist/agent-desktop/index.js"
+    },
+    "./computer-use": {
+      "types": "./dist/computer-use/index.d.ts",
+      "default": "./dist/computer-use/index.js"
+    },
+    "./mcp": {
+      "types": "./dist/mcp-server.d.ts",
+      "default": "./dist/mcp-server.js"
+    },
+    "./locale/*.json": "./locale/*.json",
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist",
+    "native",
+    "assets",
+    "locale",
+    "skills",
+    ".claude-plugin",
+    "cordis.patch.yml",
+    "market-index.json",
+    "README.md",
+    "LICENSE"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "title": "GhostPaw — Background Computer-Use",
+    "description": "Background window activation + occluded window passthrough click/type + multi-sub-agent parallel Neon Hollow GhostPaw cursors without stealing physical mouse or focus.",
+    "category": "automation",
+    "locales": {
+      "zh-CN": "./locale/zh-CN.json",
+      "en-US": "./locale/en-US.json"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "node --test test/ghostpaw.test.mjs",
+    "prepublishOnly": "npm run build && npm test"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "*"
+  },
+  "peerDependenciesMeta": {
+    "@deepseek-ai/cordis": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@deepseek-ai/cordis": "^0.2.2-rc.1",
+    "@types/node": "^22.0.0",
+    "typescript": "^5.7.0"
+  },
+  "engines": {
+    "node": ">=18.18.0"
+  }
+}

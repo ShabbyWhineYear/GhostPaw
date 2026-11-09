@@ -1,0 +1,41 @@
+{
+  "format": 1,
+  "updatedAt": "2026-11-09T04:30:00.000Z",
+  "objects": [
+    {
+      "name": "ghost-paw",
+      "version": "0.1.0",
+      "description": "GhostPaw — Background non-focus-stealing computer-use & multi-sub-agent parallel Neon Hollow cursor engine (supports occluded window passthrough click/type, background app launch, and independent sub-agent cursors).",
+      "author": {
+        "name": "ShabbyWhineYear",
+        "url": "https://github.com/ShabbyWhineYear"
+      },
+      "keywords": [
+        "computer-use",
+        "desktop-automation",
+        "background-click",
+        "multi-agent",
+        "sub-agent",
+        "ghost-paw"
+      ],
+      "categories": [
+        "automation",
+        "tools"
+      ],
+      "repository": "https://github.com/ShabbyWhineYear/GhostPaw",
+      "homepage": "https://github.com/ShabbyWhineYear/GhostPaw#readme",
+      "license": "MIT",
+      "bundle": "git+https://github.com/ShabbyWhineYear/GhostPaw.git",
+      "locales": {
+        "zh-CN": {
+          "title": "GhostPaw — 后台无感透传 Computer-Use 与多智能体幻影猫爪光标",
+          "description": "支持后台静默激活/启动窗口、遮挡窗口消息透传点击与输入、DWM 后台截图，以及主/子 Agent 并行互不干扰的霓虹空心猫爪鼠标覆盖层。"
+        },
+        "en-US": {
+          "title": "GhostPaw — Background Computer-Use & Multi-Agent Neon Hollow Cursor",
+          "description": "Background window activation + occluded window passthrough click/type + multi-sub-agent parallel Neon Hollow GhostPaw cursors without stealing physical mouse or focus."
+        }
+      }
+    }
+  ]
+}
