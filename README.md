@@ -135,6 +135,26 @@ When spawning multiple sub-agents to operate different desktop windows simultane
 
 ---
 
+## 🙏 Acknowledgements & Upstream Credits (致谢与借鉴项目)
+
+**GhostPaw** stands on the shoulders of giants. We gratefully acknowledge the following open-source projects whose architecture, drivers, and design paradigms inspired and powered this project:
+
+1. **[`vercel-labs/agent-desktop`](https://github.com/vercel-labs/agent-desktop)** *(Vercel Labs)*
+   - **What we used / borrowed**: Cross-platform OS Accessibility Tree (`Windows UIA` / `macOS AXUIElement` / `Linux AT-SPI`) snapshot engine (`@snapshot_id:eN` semantic refs) and native layered window cursor-overlay IPC protocol (`v1.2.0`).
+   - **What GhostPaw adds on top**: Windows occluded-window Win32 message passthrough engine (`GhostPawWin32BgV4`), Foreground Focus Shield for non-activating background app launch (`launch_background`), automatic per-window / per-sub-agent parallel cursor pipeline isolation, Linux X11 32-bit ARGB click-through overlay daemon, Windows UAC/DACL automatic self-healing, and the custom **Neon Hollow GhostPaw Cursor**.
+2. **[`bytedance/UI-TARS-desktop`](https://github.com/bytedance/UI-TARS-desktop)** (`@ui-tars/operator-nut-js`) & **[`nut-tree-fork/libnut`](https://github.com/nut-tree-fork/libnut)**
+   - **What we used / borrowed**: Native C++ N-API desktop automation addon (`libnut.node`), HiDPI logical-to-physical coordinate mapping, and lossless Unicode clipboard paste injection to bypass IME candidate-box character dropping.
+3. **[`anthropics/anthropic-quickstarts` (`computer-use-demo`)](https://github.com/anthropics/anthropic-quickstarts/tree/main/computer-use-demo)** *(Anthropic)*
+   - **What we used / borrowed**: Unified `computer` tool action schema (`screenshot`, `click`, `double_click`, `triple_click`, `right_click`, `drag`, `scroll`, `type`, `key`, `wait`) and multimodal visual-action loop design.
+4. **[`simular-ai/Agent-S`](https://github.com/simular-ai/Agent-S)** *(Simular AI — Agent-S2)*
+   - **What we used / borrowed**: Post-action visual grounding feedback with pixel coordinate ruler grids (`Coordinate Grid`) and red click-point crosshair markers (`Red Crosshair`) overlaid onto screenshots.
+5. **[`OpenInterpreter/open-interpreter`](https://github.com/OpenInterpreter/open-interpreter)** & **[`asweigart/pyautogui`](https://github.com/asweigart/pyautogui)**
+   - **What we used / borrowed**: Physical mouse Fail-Safe emergency stop mechanism — moving the physical mouse to `(0, 0)` or human manual mouse movement (`>160px`) during `headed: true` mode immediately aborts execution and returns control to the user.
+6. **[`DeepSeek Harness (dsh)`](https://www.deepseek.com/harness/)** & **[`@deepseek-ai/cordis`](https://www.npmjs.com/package/@deepseek-ai/cordis)**
+   - **What we used / borrowed**: Cordis dependency-injection plugin architecture and decentralized `MarketIndex` (Format 1) specification.
+
+---
+
 ## 📄 License
 
 [MIT](./LICENSE) © ShabbyWhineYear
