@@ -96,6 +96,26 @@ export function resolveAgentDesktopTarget(platform = process.platform, arch = pr
     return AGENT_DESKTOP_RELEASE_MATRIX[`${platform}-${arch}`];
 }
 const hardenedWinDirs = new Set();
+let fallbackWinStateSubdir;
+function repairWindowsPrivateDirAclAndOwner(dirPath) {
+    if (process.platform !== 'win32')
+        return;
+    const username = process.env.USERNAME?.trim();
+    try {
+        if (username) {
+            spawnSync('icacls.exe', [dirPath, '/setowner', username, '/T', '/C', '/Q'], {
+                timeout: 3500,
+                windowsHide: true,
+            });
+        }
+        spawnSync('icacls.exe', [dirPath, '/inheritance:d', '/Q'], { timeout: 2500, windowsHide: true });
+        if (username) {
+            spawnSync('icacls.exe', [dirPath, '/grant:r', `${username}:(OI)(CI)F`, 'SYSTEM:(OI)(CI)F', 'Administrators:(OI)(CI)F', '/T', '/C', '/Q'], { timeout: 3500, windowsHide: true });
+        }
+        spawnSync('icacls.exe', [dirPath, '/remove:g', 'Users', 'Authenticated Users', 'Everyone', 'CodexSandboxUsers', '/T', '/C', '/Q'], { timeout: 3500, windowsHide: true });
+    }
+    catch { }
+}
 function ensurePrivateDir(dirPath) {
     mkdirSync(dirPath, { recursive: true });
     if (process.platform !== 'win32') {
@@ -106,15 +126,9 @@ function ensurePrivateDir(dirPath) {
     }
     else if (!hardenedWinDirs.has(dirPath)) {
         hardenedWinDirs.add(dirPath);
-        // 移除可能从 %USERPROFILE% 继承的非受信组（如 CodexSandboxUsers），防止 agent-desktop.exe 报 "private file DACL grants an untrusted principal"
-        try {
-            spawnSync('icacls.exe', [dirPath, '/inheritance:d', '/Q'], { timeout: 2500, windowsHide: true });
-            spawnSync('icacls.exe', [dirPath, '/remove:g', 'CodexSandboxUsers', '/T', '/C', '/Q'], {
-                timeout: 3500,
-                windowsHide: true,
-            });
-        }
-        catch { }
+        // 自动修复 Owner 为当前用户名并移除可能从 %USERPROFILE% 继承的非受信组（如 CodexSandboxUsers），
+        // 防止因管理员/SSH 终端与普通桌面进程混用导致 agent-desktop.exe 报 "foreign principal" 或 "untrusted principal"
+        repairWindowsPrivateDirAclAndOwner(dirPath);
     }
     return dirPath;
 }
@@ -125,7 +139,7 @@ export function getAgentDesktopRootDir() {
 }
 /** 获取 `agent-desktop` 状态目录 (`~/.ghostpaw/state`) */
 export function getAgentDesktopStateDir() {
-    return ensurePrivateDir(join(getAgentDesktopRootDir(), 'state'));
+    return ensurePrivateDir(join(getAgentDesktopRootDir(), fallbackWinStateSubdir || 'state'));
 }
 /**
  * 确保插件标志性的 Gemini 圆角三角形 3D 琉璃渐变小鼠标透明 PNG (56×56, hotspot `6,2`) 已落盘
@@ -1107,7 +1121,7 @@ export async function runAgentDesktopCli(args, options = {}) {
     const binPath = await ensureAgentDesktopBinary();
     const stateDir = getAgentDesktopStateDir();
     const timeoutMs = options.timeoutMs ?? 35000;
-    return new Promise((resolvePromise, rejectPromise) => {
+    const res = await new Promise((resolvePromise, rejectPromise) => {
         const env = {
             ...process.env,
             AGENT_DESKTOP_HOME: stateDir,
@@ -1171,6 +1185,23 @@ export async function runAgentDesktopCli(args, options = {}) {
         }
         child.stdin.end();
     });
+    const retryAttempt = options._aclRetryAttempt ?? 0;
+    if (process.platform === 'win32' &&
+        retryAttempt < 2 &&
+        res.envelope?.ok === false &&
+        /foreign principal|untrusted principal/i.test(`${res.envelope?.error?.message ?? ''} ${res.stderr} ${res.stdout}`)) {
+        if (retryAttempt === 0) {
+            repairWindowsPrivateDirAclAndOwner(getAgentDesktopRootDir());
+            repairWindowsPrivateDirAclAndOwner(stateDir);
+        }
+        else {
+            const safeUser = (process.env.USERNAME?.trim() || 'user').replace(/[^a-zA-Z0-9_-]/g, '_');
+            fallbackWinStateSubdir = `state-${safeUser}-uac`;
+            hardenedWinDirs.clear();
+        }
+        return runAgentDesktopCli(args, { ...options, _aclRetryAttempt: retryAttempt + 1 });
+    }
+    return res;
 }
 const activeSessions = new Map();
 const activeSessionInFlight = new Map();

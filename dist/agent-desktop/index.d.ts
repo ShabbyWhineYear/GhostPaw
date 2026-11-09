@@ -135,6 +135,7 @@ export declare function runAgentDesktopCli(args: readonly string[], options?: {
     readonly timeoutMs?: number;
     readonly sessionId?: string;
     readonly agentId?: string;
+    readonly _aclRetryAttempt?: number;
 }): Promise<AgentDesktopCliResponse>;
 export interface CachedRefMeta {
     readonly ref: string;
